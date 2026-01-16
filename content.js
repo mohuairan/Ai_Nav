@@ -30,17 +30,14 @@
                 return first ? (first.textContent.trim().substring(0, 15) + '...') : '新对话';
             }
         },
-        // --- DeepSeek 策略 (已针对你提供的 HTML 优化) ---
         deepseek: {
             name: 'DeepSeek',
-            // 增加 .fbb737a4 和 .ds-message (配合父级筛选)
-            querySelector: '.fbb737a4, .ds-user-message, [data-role="user"], .user-message', 
+            querySelector: '.ds-message, .ds-user-message, [data-role="user"], .fbb737a4', 
             getText: (node) => node.textContent.trim(),
             getTitle: () => {
                 let docTitle = document.title.replace('DeepSeek', '').trim();
-                if (docTitle && docTitle !== 'New Chat') return docTitle;
-                // 优先尝试抓取那个特定的 hash 类名
-                const first = document.querySelector('.fbb737a4, .ds-user-message, [data-role="user"]');
+                if (docTitle && docTitle !== 'New Chat' && docTitle !== 'DeepSeek') return docTitle;
+                const first = document.querySelector('.ds-message, .ds-user-message');
                 return first ? (first.textContent.trim().substring(0, 15) + '...') : '新对话';
             }
         }
@@ -84,23 +81,32 @@
             --tab-inactive: #999; --tab-active: #000;
         }
         
-        #ai-nav-container { font-family: sans-serif; transition: width 0.2s, height 0.2s, border-radius 0.2s, opacity 0.2s; font-size: 13px; line-height: 1.4; overflow: hidden; }
+        #ai-nav-container { 
+            font-family: sans-serif; 
+            font-size: 13px; line-height: 1.4; 
+            overflow: hidden; 
+            resize: both; 
+            min-width: 180px; min-height: 200px;
+            /* 正常状态下无 transition，保证手动缩放跟手 */
+        }
         
         #ai-nav-container.minimized {
             width: 48px !important;
             height: 48px !important;
             border-radius: 50% !important;
             overflow: hidden !important;
-            cursor: pointer;
+            cursor: move;
             box-shadow: 0 4px 10px rgba(0,0,0,0.3);
             border: 2px solid var(--nav-accent) !important;
+            resize: none !important;
+            min-width: 0; min-height: 0;
         }
         
         .minimized-icon {
             display: none; width: 100%; height: 100%;
             align-items: center; justify-content: center;
-            font-size: 24px; color: var(--nav-text); background: rgba(var(--nav-bg), 0.9);
-            user-select: none;
+            font-size: 24px; color: var(--nav-text); background: rgba(var(--nav-bg), 0.95);
+            user-select: none; pointer-events: none;
         }
         #ai-nav-container.minimized .minimized-icon { display: flex; }
         #ai-nav-container.minimized #ai-nav-main-content { display: none; }
@@ -147,7 +153,7 @@
     };
 
     container.innerHTML = `
-        <div class="minimized-icon" title="点击展开">🤖</div>
+        <div class="minimized-icon">🤖</div>
         <div id="ai-nav-main-content">
             <div id="ai-nav-drag-area" title="双击标题栏最小化">
                 <span style="font-weight:bold; color:var(--nav-text); pointer-events: none;">${currentStrategy.name} 助手</span>
@@ -162,7 +168,6 @@
                 <div class="nav-tab" id="tab-bookmarks">收藏对话</div>
             </div>
             <div id="ai-nav-list" style="flex: 1; overflow-y: auto; padding: 8px;"></div>
-            <div style="position: absolute; bottom: 0; right: 0; width: 15px; height: 15px; cursor: se-resize;" title="拖动改变大小"></div>
         </div>
     `;
 
@@ -179,35 +184,76 @@
     const listElement = document.getElementById('ai-nav-list');
     const tabCurrent = document.getElementById('tab-current');
     const tabBookmarks = document.getElementById('tab-bookmarks');
-    const minimizedIcon = container.querySelector('.minimized-icon');
 
+    // 监听器：实时记录用户调整的尺寸
+    const resizeObserver = new ResizeObserver(entries => {
+        if (!isMinimized) {
+            for (let entry of entries) {
+                savedDimensions.width = entry.contentRect.width + 'px';
+                if (container.style.width) savedDimensions.width = container.style.width;
+                if (container.style.height) savedDimensions.height = container.style.height;
+            }
+        }
+    });
+    resizeObserver.observe(container);
+
+    // 最小化/展开逻辑
     function toggleMinimize(forceState) {
         if (typeof forceState !== 'undefined') isMinimized = forceState;
         else isMinimized = !isMinimized;
         
+        // 开启丝滑过渡
+        container.style.transition = 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1), height 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-radius 0.3s, opacity 0.3s';
+        
         if (isMinimized) {
-            if (container.style.width && container.style.width !== '48px') {
-                savedDimensions.width = container.style.width;
-                savedDimensions.height = container.style.height;
-            }
             container.classList.add('minimized');
-            container.title = "拖动我移动 / 点击我展开";
             container.style.width = '';
             container.style.height = '';
         } else {
             container.classList.remove('minimized');
-            container.title = "";
             container.style.width = savedDimensions.width;
             container.style.height = savedDimensions.height;
+
+            // --- 智能归位修复 (v12.3) ---
+            // 关键：必须使用 target (savedDimensions) 计算，而不是 getBoundingClientRect 的当前动画值
+            const targetW = parseInt(savedDimensions.width) || 240;
+            const targetH = parseInt(savedDimensions.height) || 400;
+            
+            const rect = container.getBoundingClientRect();
+            // rect.left 和 rect.top 是准确的锚点位置
+            const currentLeft = rect.left;
+            const currentTop = rect.top;
+
+            const winW = window.innerWidth;
+            const winH = window.innerHeight;
+
+            // 检查右边界
+            if (currentLeft + targetW > winW) {
+                // 如果展开后会超出右边，就向左移，留20px
+                container.style.left = Math.max(20, winW - targetW - 20) + 'px';
+                container.style.right = 'auto';
+            }
+            
+            // 检查下边界
+            if (currentTop + targetH > winH) {
+                // 如果展开后会超出下边，就向上移，留20px
+                container.style.top = Math.max(80, winH - targetH - 20) + 'px';
+                container.style.bottom = 'auto';
+            }
+
             if(activeTab === 'current') renderCurrentPageNav(true);
         }
         localStorage.setItem(STATE_KEY, isMinimized);
+
+        // 动画结束后移除 transition，恢复跟手缩放
+        setTimeout(() => {
+            container.style.transition = '';
+        }, 350);
     }
 
     document.getElementById('minimize-btn').addEventListener('click', (e) => {
         e.stopPropagation(); toggleMinimize(true);
     });
-    minimizedIcon.addEventListener('click', () => toggleMinimize(false));
     document.getElementById('ai-nav-drag-area').addEventListener('dblclick', () => toggleMinimize(true));
 
 
@@ -226,7 +272,6 @@
 
     function renderCurrentPageNav(force = false) {
         if (activeTab !== 'current' || isMinimized) return;
-        // DeepSeek 使用你提供的类名 .fbb737a4
         const queries = Array.from(document.querySelectorAll(currentStrategy.querySelector));
         
         if (!force && queries.length === lastQueryCount) return;
@@ -342,46 +387,52 @@
     });
 
     // --- 7. 拖拽逻辑 ---
-    let isDragging = false, startX, startY, initialLeft, initialTop;
+    let isDragging = false;
+    let isDragMove = false;
+    let startX, startY, initialLeft, initialTop;
     
     const handleMouseDown = (e) => {
         if (!isMinimized && (e.target.closest('.nav-controls') || e.target.tagName === 'INPUT')) return;
         e.preventDefault();
         
         isDragging = true;
+        isDragMove = false;
         startX = e.clientX; startY = e.clientY;
         const rect = container.getBoundingClientRect();
         initialLeft = rect.left; initialTop = rect.top;
         
         container.style.right = 'auto'; container.style.bottom = 'auto';
-        container.style.left = rect.left + 'px'; 
-        container.style.top = rect.top + 'px';
-
-        if (!isMinimized) {
-            container.style.width = rect.width + 'px'; 
-            container.style.height = rect.height + 'px';
-            savedDimensions.width = rect.width + 'px';
-            savedDimensions.height = rect.height + 'px';
-        }
+        container.style.left = initialLeft + 'px'; 
+        container.style.top = initialTop + 'px';
 
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
     };
 
-    document.getElementById('ai-nav-drag-area').addEventListener('mousedown', handleMouseDown);
-    minimizedIcon.addEventListener('mousedown', handleMouseDown);
-
     function onMouseMove(e) {
         if (!isDragging) return;
-        container.style.left = (initialLeft + (e.clientX - startX)) + 'px';
-        container.style.top = (initialTop + (e.clientY - startY)) + 'px';
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+            isDragMove = true;
+            container.style.left = (initialLeft + dx) + 'px';
+            container.style.top = (initialTop + dy) + 'px';
+        }
     }
 
-    function onMouseUp() {
+    function onMouseUp(e) {
         isDragging = false;
         document.removeEventListener('mousemove', onMouseMove);
         document.removeEventListener('mouseup', onMouseUp);
+        if (!isDragMove && isMinimized) {
+            toggleMinimize(false);
+        }
     }
+
+    document.getElementById('ai-nav-drag-area').addEventListener('mousedown', handleMouseDown);
+    container.addEventListener('mousedown', (e) => {
+        if (isMinimized) handleMouseDown(e);
+    });
 
     // --- 8. 观察者 ---
     const observer = new MutationObserver((mutations) => {
