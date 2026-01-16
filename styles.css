@@ -1,0 +1,101 @@
+/* 主容器 */
+#gemini-nav-container {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  width: 220px;
+  height: 300px; /* 默认高度 */
+  min-width: 180px;
+  min-height: 150px;
+  background: rgba(30, 31, 32, 0.95); /* 默认不透明度 */
+  border: 1px solid #555;
+  border-radius: 12px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  backdrop-filter: blur(5px);
+  /* 关键：允许缩放 */
+  resize: both; 
+  overflow: hidden; 
+}
+
+/* 标题栏 (拖动区域) */
+#gemini-nav-header {
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid #444;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: move; /* 鼠标变成移动图标 */
+  user-select: none;
+}
+
+#gemini-nav-title {
+  font-size: 13px;
+  font-weight: bold;
+  color: #e3e3e3;
+}
+
+/* 控制区：滑块和按钮 */
+.nav-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 透明度滑块 */
+#opacity-slider {
+  width: 60px;
+  height: 4px;
+  cursor: pointer;
+  accent-color: #8ab4f8; /* 滑块颜色 */
+}
+
+/* 按钮样式 */
+.icon-btn {
+  cursor: pointer;
+  font-size: 14px;
+  color: #aaa;
+  transition: color 0.2s;
+}
+.icon-btn:hover {
+  color: #fff;
+}
+
+/* 列表区域 */
+#gemini-nav-list {
+  flex: 1; /* 占满剩余空间 */
+  overflow-y: auto; /* 允许内部滚动 */
+  padding: 8px;
+  /* 解决第一项样式问题：统一 reset */
+  margin: 0;
+}
+
+/* 单个提问项 */
+.nav-item {
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #c4c7c5;
+  background: rgba(255, 255, 255, 0.03); /* 统一背景 */
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-left: 3px solid transparent;
+  transition: all 0.2s;
+}
+
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  border-left: 3px solid #8ab4f8;
+}
+
+/* 滚动条美化 */
+#gemini-nav-list::-webkit-scrollbar { width: 5px; height: 5px; }
+#gemini-nav-list::-webkit-scrollbar-thumb { background: #666; border-radius: 3px; }
+#gemini-nav-list::-webkit-scrollbar-corner { background: transparent; }
