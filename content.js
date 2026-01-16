@@ -3,23 +3,20 @@
 
     if (document.getElementById('ai-nav-container')) return;
 
-    // --- 0. 策略定义 (回归基础，不再纠结侧边栏) ---
+    // --- 0. 辅助函数 ---
+    function cleanTitle(text) { return text ? text.replace(/[\n\r]+/g, ' ').trim() : null; }
+
+    // --- 1. 策略定义 ---
     const STRATEGIES = {
         gemini: {
             name: 'Gemini',
             querySelector: 'user-query, .user-query, [data-message-id]', 
             getText: (node) => node.textContent.trim(),
             getTitle: () => {
-                // 默认策略：取网页标题，如果标题是默认的，就取第一句提问
                 let docTitle = document.title.replace(/ - Google Gemini/g, '').replace(/Gemini/g, '').trim();
                 if (docTitle && docTitle !== 'Google' && docTitle !== '') return docTitle;
-                
-                const firstQuery = document.querySelector('user-query, .user-query, [data-message-id]');
-                if (firstQuery) {
-                    const text = firstQuery.textContent.trim();
-                    return text.substring(0, 15) + (text.length > 15 ? '...' : '');
-                }
-                return '新对话 ' + new Date().toLocaleTimeString();
+                const first = document.querySelector('user-query, .user-query, [data-message-id]');
+                return first ? (first.textContent.trim().substring(0, 15) + '...') : '新对话';
             }
         },
         chatgpt: {
@@ -28,15 +25,9 @@
             getText: (node) => node.textContent.trim(),
             getTitle: () => {
                 let docTitle = document.title.trim();
-                const genericNames = ['ChatGPT', 'New chat', 'New Chat'];
-                if (docTitle && !genericNames.includes(docTitle)) return docTitle;
-
-                const firstQuery = document.querySelector('[data-message-author-role="user"]');
-                if (firstQuery) {
-                     const text = firstQuery.textContent.trim();
-                     return text.substring(0, 15) + (text.length > 15 ? '...' : '');
-                }
-                return '新对话 ' + new Date().toLocaleTimeString();
+                if (docTitle && !['ChatGPT', 'New chat'].includes(docTitle)) return docTitle;
+                const first = document.querySelector('[data-message-author-role="user"]');
+                return first ? (first.textContent.trim().substring(0, 15) + '...') : '新对话';
             }
         }
     };
@@ -47,20 +38,21 @@
     else if (host.includes('chatgpt.com') || host.includes('openai.com')) currentStrategy = STRATEGIES.chatgpt;
     else return;
 
-    // --- 1. 状态与存储 ---
+    // --- 2. 状态管理 ---
     const THEME_KEY = 'ai_nav_theme_mode';
     const BOOKMARK_KEY = 'ai_nav_global_bookmarks';
-    
-    let currentThemeMode = localStorage.getItem(THEME_KEY) || 'auto';
-    let activeTab = 'current'; 
-    let lastQueryCount = -1;
+    const STATE_KEY = 'ai_nav_is_minimized';
 
-    const loadBookmarks = () => {
-        try { return JSON.parse(localStorage.getItem(BOOKMARK_KEY)) || []; } catch(e) { return []; }
-    };
+    let currentThemeMode = localStorage.getItem(THEME_KEY) || 'auto';
+    let isMinimized = localStorage.getItem(STATE_KEY) === 'true';
+    let activeTab = 'current';
+    let lastQueryCount = -1;
+    let savedDimensions = { width: '240px', height: '400px' }; // 记忆尺寸
+
+    const loadBookmarks = () => { try { return JSON.parse(localStorage.getItem(BOOKMARK_KEY)) || []; } catch(e){return[];} };
     const saveBookmarks = (list) => localStorage.setItem(BOOKMARK_KEY, JSON.stringify(list));
 
-    // --- 2. 样式注入 ---
+    // --- 3. 样式注入 ---
     const styleTag = document.createElement('style');
     styleTag.textContent = `
         :root {
@@ -76,8 +68,30 @@
             --nav-accent: #0056b3; --icon-color: #666; --icon-hover: #000;
             --tab-inactive: #999; --tab-active: #000;
         }
-        #ai-nav-container { font-family: sans-serif; transition: background 0.3s, border 0.3s; font-size: 13px; line-height: 1.4; }
         
+        #ai-nav-container { font-family: sans-serif; transition: width 0.2s, height 0.2s, border-radius 0.2s, opacity 0.2s; font-size: 13px; line-height: 1.4; overflow: hidden; }
+        
+        #ai-nav-container.minimized {
+            width: 48px !important;
+            height: 48px !important;
+            border-radius: 50% !important;
+            overflow: hidden !important;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            border: 2px solid var(--nav-accent) !important;
+        }
+        
+        .minimized-icon {
+            display: none; width: 100%; height: 100%;
+            align-items: center; justify-content: center;
+            font-size: 24px; color: var(--nav-text); background: rgba(var(--nav-bg), 0.9);
+            user-select: none;
+        }
+        #ai-nav-container.minimized .minimized-icon { display: flex; }
+        #ai-nav-container.minimized #ai-nav-main-content { display: none; }
+
+        #ai-nav-main-content { display: flex; flex-direction: column; height: 100%; }
+
         #ai-nav-drag-area { padding: 8px 10px; background: rgba(255,255,255,0.02); display: flex; justify-content: space-between; align-items: center; cursor: move; border-bottom: 1px solid var(--nav-border); user-select: none; }
         .nav-controls { display: flex; gap: 8px; align-items: center; }
         .icon-btn { cursor: pointer; font-size: 14px; color: var(--icon-color); transition: transform 0.2s, color 0.2s; }
@@ -92,17 +106,11 @@
         .nav-item:hover { background: var(--nav-item-hover); border-left: 3px solid var(--nav-accent); }
         .nav-text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-right: 8px; }
         
-        /* 按钮组 */
         .item-actions { display: flex; gap: 6px; opacity: 0.6; transition: opacity 0.2s; }
         .nav-item:hover .item-actions { opacity: 1; }
-        
         .action-btn { font-size: 12px; padding: 2px 4px; border-radius: 3px; cursor: pointer; }
-        .edit-btn { color: var(--icon-color); }
         .edit-btn:hover { background: var(--edit-color); color: #000; }
-        .del-btn { color: var(--icon-color); }
         .del-btn:hover { background: var(--del-color); color: #fff; }
-
-        /* 编辑框样式 */
         .edit-input { flex: 1; background: rgba(0,0,0,0.2); border: 1px solid var(--nav-accent); color: var(--nav-text); font-size: 12px; padding: 2px 4px; border-radius: 4px; outline: none; margin-right: 6px; }
 
         #ai-nav-list::-webkit-scrollbar { width: 5px; height: 5px; }
@@ -110,10 +118,11 @@
     `;
     document.head.appendChild(styleTag);
 
-    // --- 3. DOM 构建 ---
+    // --- 4. DOM 构建 ---
     const container = document.createElement('div');
     container.id = 'ai-nav-container';
     container.setAttribute('data-ai-theme', 'dark');
+    if (isMinimized) container.classList.add('minimized');
 
     const getThemeIcon = (mode) => {
         if (mode === 'auto') return '🌗';
@@ -123,47 +132,77 @@
     };
 
     container.innerHTML = `
-        <div id="ai-nav-drag-area">
-            <span style="font-weight:bold; color:var(--nav-text)">${currentStrategy.name} 助手</span>
-            <div class="nav-controls">
-                <span id="save-chat-btn" class="icon-btn" title="收藏当前对话">★ 收藏</span>
-                <span style="width:1px; background:var(--nav-border); height:14px; margin:0 4px;"></span>
-                <span id="theme-toggle-btn" class="icon-btn" title="切换主题">${getThemeIcon(currentThemeMode)}</span>
-                <span id="nav-refresh-btn" class="icon-btn" title="刷新列表">↻</span>
+        <div class="minimized-icon" title="点击展开">🤖</div>
+        <div id="ai-nav-main-content">
+            <div id="ai-nav-drag-area" title="双击标题栏最小化">
+                <span style="font-weight:bold; color:var(--nav-text); pointer-events: none;">${currentStrategy.name} 助手</span>
+                <div class="nav-controls">
+                    <span id="save-chat-btn" class="icon-btn" title="收藏当前对话">★</span>
+                    <span id="theme-toggle-btn" class="icon-btn" title="切换主题">${getThemeIcon(currentThemeMode)}</span>
+                    <span id="minimize-btn" class="icon-btn" title="收起为悬浮球">－</span>
+                </div>
             </div>
+            <div class="nav-tabs">
+                <div class="nav-tab active" id="tab-current">当前大纲</div>
+                <div class="nav-tab" id="tab-bookmarks">收藏对话</div>
+            </div>
+            <div id="ai-nav-list" style="flex: 1; overflow-y: auto; padding: 8px;"></div>
+            <div style="position: absolute; bottom: 0; right: 0; width: 15px; height: 15px; cursor: se-resize;" title="拖动改变大小"></div>
         </div>
-        <div class="nav-tabs">
-            <div class="nav-tab active" id="tab-current">当前大纲</div>
-            <div class="nav-tab" id="tab-bookmarks">收藏对话</div>
-        </div>
-        <div id="ai-nav-list" style="flex: 1; overflow-y: auto; padding: 8px;"></div>
-        <div style="position: absolute; bottom: 0; right: 0; width: 15px; height: 15px; cursor: se-resize;"></div>
     `;
 
     container.style.cssText = `
         position: fixed; top: 80px; right: 20px; width: 240px; height: 400px;
         background: rgba(var(--nav-bg), 0.95); border: 1px solid var(--nav-border); 
-        border-radius: 12px; z-index: 9999; display: flex; flex-direction: column;
+        border-radius: 12px; z-index: 9999; 
         box-shadow: 0 8px 24px rgba(0,0,0,0.2); backdrop-filter: blur(5px);
-        resize: both; overflow: hidden;
     `;
     
     document.body.appendChild(container);
 
-    // --- 4. 核心逻辑 ---
+    // --- 5. 核心逻辑 ---
     const listElement = document.getElementById('ai-nav-list');
     const tabCurrent = document.getElementById('tab-current');
     const tabBookmarks = document.getElementById('tab-bookmarks');
+    const minimizedIcon = container.querySelector('.minimized-icon');
+
+    function toggleMinimize(forceState) {
+        if (typeof forceState !== 'undefined') isMinimized = forceState;
+        else isMinimized = !isMinimized;
+        
+        if (isMinimized) {
+            if (container.style.width && container.style.width !== '48px') {
+                savedDimensions.width = container.style.width;
+                savedDimensions.height = container.style.height;
+            }
+            container.classList.add('minimized');
+            container.title = "拖动我移动 / 点击我展开";
+            container.style.width = '';
+            container.style.height = '';
+        } else {
+            container.classList.remove('minimized');
+            container.title = "";
+            container.style.width = savedDimensions.width;
+            container.style.height = savedDimensions.height;
+            if(activeTab === 'current') renderCurrentPageNav(true);
+        }
+        localStorage.setItem(STATE_KEY, isMinimized);
+    }
+
+    document.getElementById('minimize-btn').addEventListener('click', (e) => {
+        e.stopPropagation(); toggleMinimize(true);
+    });
+    minimizedIcon.addEventListener('click', () => toggleMinimize(false));
+    document.getElementById('ai-nav-drag-area').addEventListener('dblclick', () => toggleMinimize(true));
+
 
     function switchTab(tab) {
         activeTab = tab;
         if (tab === 'current') {
-            tabCurrent.classList.add('active');
-            tabBookmarks.classList.remove('active');
+            tabCurrent.classList.add('active'); tabBookmarks.classList.remove('active');
             renderCurrentPageNav(true); 
         } else {
-            tabCurrent.classList.remove('active');
-            tabBookmarks.classList.add('active');
+            tabCurrent.classList.remove('active'); tabBookmarks.classList.add('active');
             renderBookmarks();
         }
     }
@@ -171,261 +210,178 @@
     tabBookmarks.onclick = () => switchTab('bookmarks');
 
     function renderCurrentPageNav(force = false) {
-        if (activeTab !== 'current') return;
+        if (activeTab !== 'current' || isMinimized) return;
         const queries = Array.from(document.querySelectorAll(currentStrategy.querySelector));
-        
         if (!force && queries.length === lastQueryCount) return;
         lastQueryCount = queries.length;
-
         listElement.innerHTML = '';
         if (queries.length === 0) {
-            listElement.innerHTML = '<div style="padding:10px; opacity:0.6; text-align:center;">暂无提问...</div>';
-            return;
+            listElement.innerHTML = '<div style="padding:10px; opacity:0.6; text-align:center;">暂无提问...</div>'; return;
         }
-
-        const fragment = document.createDocumentFragment();
-        queries.forEach((queryNode, index) => {
-            const fullText = currentStrategy.getText(queryNode);
-            if (!fullText) return;
-            
+        const frag = document.createDocumentFragment();
+        queries.forEach((node, i) => {
+            const txt = currentStrategy.getText(node);
+            if (!txt) return;
             const item = document.createElement('div');
             item.className = 'nav-item';
-            
-            const textSpan = document.createElement('span');
-            textSpan.className = 'nav-text';
-            textSpan.textContent = `${index + 1}. ${fullText}`;
-            item.title = fullText;
-
-            item.appendChild(textSpan);
+            const span = document.createElement('span');
+            span.className = 'nav-text';
+            span.textContent = `${i + 1}. ${txt}`;
+            item.title = txt;
+            item.appendChild(span);
             item.onclick = () => {
-                queryNode.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                queryNode.style.transition = 'opacity 0.3s';
-                queryNode.style.opacity = '0.5';
-                setTimeout(() => queryNode.style.opacity = '1', 300);
+                node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                node.style.transition = 'opacity 0.3s'; node.style.opacity = '0.5';
+                setTimeout(() => node.style.opacity = '1', 300);
             };
-            fragment.appendChild(item);
+            frag.appendChild(item);
         });
-        listElement.appendChild(fragment);
+        listElement.appendChild(frag);
         if (force && listElement.scrollHeight > 0) listElement.scrollTop = listElement.scrollHeight;
     }
 
-    // --- 渲染：收藏夹 (含编辑功能) ---
     function renderBookmarks() {
         if (activeTab !== 'bookmarks') return;
         listElement.innerHTML = '';
         const bookmarks = loadBookmarks();
-
         if (bookmarks.length === 0) {
-            listElement.innerHTML = '<div style="padding:20px 10px; opacity:0.6; text-align:center;">暂无收藏<br><small>点击 "★ 收藏" 后<br>可手动编辑名称</small></div>';
-            return;
+            listElement.innerHTML = '<div style="padding:20px 10px; opacity:0.6; text-align:center;">暂无收藏<br><small>点击 "★" 保存</small></div>'; return;
         }
-
-        const fragment = document.createDocumentFragment();
-        bookmarks.reverse().forEach((bk, index) => {
+        const frag = document.createDocumentFragment();
+        bookmarks.reverse().forEach((bk) => {
             const item = document.createElement('div');
             item.className = 'nav-item';
-            
-            // 文本区域 (默认显示)
-            const linkSpan = document.createElement('span');
-            linkSpan.className = 'nav-text';
-            linkSpan.textContent = bk.title || '未命名对话';
-            linkSpan.title = `${bk.title}\n(${bk.url})`;
-
-            // 按钮组容器
+            const span = document.createElement('span');
+            span.className = 'nav-text';
+            span.textContent = bk.title || '未命名对话';
+            span.title = `${bk.title}\n(${bk.url})`;
             const actionDiv = document.createElement('div');
             actionDiv.className = 'item-actions';
-
-            // 编辑按钮 (✎)
-            const editBtn = document.createElement('span');
-            editBtn.className = 'action-btn edit-btn';
-            editBtn.textContent = '✎';
-            editBtn.title = '重命名';
             
-            // 删除按钮 (✕)
-            const delBtn = document.createElement('span');
-            delBtn.className = 'action-btn del-btn';
-            delBtn.textContent = '✕';
-            delBtn.title = '删除';
-
-            // --- 编辑逻辑 ---
+            const editBtn = document.createElement('span');
+            editBtn.className = 'action-btn edit-btn'; editBtn.textContent = '✎';
             editBtn.onclick = (e) => {
-                e.stopPropagation(); // 防止跳转
-                
-                // 替换文本为输入框
+                e.stopPropagation();
                 const input = document.createElement('input');
-                input.type = 'text';
-                input.className = 'edit-input';
-                input.value = bk.title;
-                
-                // 替换 DOM
-                item.replaceChild(input, linkSpan);
-                input.focus();
-                
-                // 隐藏按钮组，避免干扰
-                actionDiv.style.display = 'none';
-
-                // 保存函数
-                const doSave = () => {
-                    const newTitle = input.value.trim();
-                    if (newTitle) {
-                        // 更新数据
-                        const allBk = loadBookmarks();
-                        // 因为是倒序显示的，需要找到原始数组对应的项
-                        // 这里最稳妥的是根据 url 找 (假设 url 唯一)
-                        const targetIndex = allBk.findIndex(b => b.url === bk.url);
-                        if (targetIndex !== -1) {
-                            allBk[targetIndex].title = newTitle;
-                            saveBookmarks(allBk);
-                        }
+                input.className = 'edit-input'; input.value = bk.title;
+                item.replaceChild(input, span); input.focus(); actionDiv.style.display = 'none';
+                const save = () => {
+                    const val = input.value.trim();
+                    if(val) {
+                        const all = loadBookmarks();
+                        const idx = all.findIndex(b => b.url === bk.url);
+                        if(idx!==-1) { all[idx].title = val; saveBookmarks(all); }
                     }
-                    renderBookmarks(); // 重新渲染恢复原状
+                    renderBookmarks();
                 };
-
-                // 监听回车和失焦
-                input.onkeydown = (ev) => {
-                    if (ev.key === 'Enter') doSave();
-                };
-                input.onblur = doSave;
+                input.onkeydown = (ev) => { if(ev.key === 'Enter') save(); };
+                input.onblur = save;
             };
 
-            // --- 删除逻辑 ---
+            const delBtn = document.createElement('span');
+            delBtn.className = 'action-btn del-btn'; delBtn.textContent = '✕';
             delBtn.onclick = (e) => {
                 e.stopPropagation();
-                if(confirm(`删除收藏 "${bk.title}"?`)) removeBookmark(bk.url);
+                if(confirm(`删除 "${bk.title}"?`)) {
+                    saveBookmarks(loadBookmarks().filter(b => b.url !== bk.url));
+                    renderBookmarks();
+                }
             };
-
-            actionDiv.appendChild(editBtn);
-            actionDiv.appendChild(delBtn);
-
-            item.appendChild(linkSpan);
-            item.appendChild(actionDiv);
-
-            // 点击条目跳转
-            item.onclick = (e) => {
-                // 如果正在编辑(有点 input 存在)，不跳转
-                if (item.querySelector('input')) return;
-                
-                if (window.location.href === bk.url) alert('已在当前对话中');
-                else window.location.href = bk.url;
-            };
-            
-            fragment.appendChild(item);
+            actionDiv.append(editBtn, delBtn);
+            item.append(span, actionDiv);
+            item.onclick = (e) => { if(!item.querySelector('input')) { if(window.location.href===bk.url)alert('已在当前对话'); else window.location.href=bk.url; } };
+            frag.appendChild(item);
         });
-        listElement.appendChild(fragment);
+        listElement.appendChild(frag);
     }
 
-    // --- 交互事件 ---
     document.getElementById('save-chat-btn').addEventListener('click', () => {
         const title = currentStrategy.getTitle();
         const url = window.location.href;
-        let bookmarks = loadBookmarks();
-        
-        if (bookmarks.find(b => b.url === url)) {
-            switchTab('bookmarks'); 
-            return;
-        }
-        
-        bookmarks.push({ title, url, time: Date.now() });
-        saveBookmarks(bookmarks);
-        
+        let bks = loadBookmarks();
+        if(bks.find(b=>b.url===url)) { switchTab('bookmarks'); return; }
+        bks.push({title, url, time:Date.now()});
+        saveBookmarks(bks);
         const btn = document.getElementById('save-chat-btn');
-        const originalText = btn.textContent;
-        btn.textContent = '✓ 已保存';
-        setTimeout(() => btn.textContent = originalText, 1500);
-        
-        if (activeTab === 'bookmarks') renderBookmarks();
-    });
-
-    function removeBookmark(targetUrl) {
-        let bookmarks = loadBookmarks();
-        bookmarks = bookmarks.filter(b => b.url !== targetUrl);
-        saveBookmarks(bookmarks);
-        renderBookmarks();
-    }
-
-    document.getElementById('nav-refresh-btn').addEventListener('click', () => {
-        lastQueryCount = -1; 
-        if (activeTab === 'current') renderCurrentPageNav(true);
-        else renderBookmarks();
+        const old = btn.textContent; btn.textContent = '✓';
+        setTimeout(()=>btn.textContent=old, 1500);
+        if(activeTab==='bookmarks') renderBookmarks();
     });
 
     function applyTheme() {
-        const themeBtn = document.getElementById('theme-toggle-btn');
-        themeBtn.textContent = getThemeIcon(currentThemeMode);
-        
-        let targetTheme = currentThemeMode;
-        if (currentThemeMode === 'auto') {
-            const bgColor = window.getComputedStyle(document.body).backgroundColor;
-            const rgb = bgColor.match(/\d+/g);
-            if (rgb) {
-                const brightness = (parseInt(rgb[0]) * 299 + parseInt(rgb[1]) * 587 + parseInt(rgb[2]) * 114) / 1000;
-                targetTheme = brightness > 140 ? 'light' : 'dark';
-            }
+        const btn = document.getElementById('theme-toggle-btn');
+        btn.textContent = getThemeIcon(currentThemeMode);
+        let target = currentThemeMode;
+        if(currentThemeMode==='auto') {
+            const bg = window.getComputedStyle(document.body).backgroundColor;
+            const rgb = bg.match(/\d+/g);
+            if(rgb) target = (parseInt(rgb[0])*299+parseInt(rgb[1])*587+parseInt(rgb[2])*114)/1000 > 140 ? 'light' : 'dark';
         }
-        if (container.getAttribute('data-ai-theme') !== targetTheme) {
-            container.setAttribute('data-ai-theme', targetTheme);
-        }
+        if(container.getAttribute('data-ai-theme')!==target) container.setAttribute('data-ai-theme', target);
     }
-
     document.getElementById('theme-toggle-btn').addEventListener('click', () => {
-        if (currentThemeMode === 'auto') currentThemeMode = 'dark';
-        else if (currentThemeMode === 'dark') currentThemeMode = 'light';
-        else currentThemeMode = 'auto';
-        localStorage.setItem(THEME_KEY, currentThemeMode);
-        applyTheme();
+        currentThemeMode = currentThemeMode==='auto'?'dark':(currentThemeMode==='dark'?'light':'auto');
+        localStorage.setItem(THEME_KEY, currentThemeMode); applyTheme();
     });
 
+    // --- 7. 拖拽逻辑 (BUG 修复核心) ---
     let isDragging = false, startX, startY, initialLeft, initialTop;
-    const dragArea = document.getElementById('ai-nav-drag-area');
     
-    dragArea.addEventListener('mousedown', (e) => {
-        // 关键修复：允许拖动标题，只屏蔽按钮区域(.nav-controls)和输入框
-        // 使用 closest 方法检查点击目标是否在控制区内
-        if (e.target.closest('.nav-controls') || e.target.tagName === 'INPUT') return;
-        
-        // 关键修复：防止文本选中导致拖动中断
+    const handleMouseDown = (e) => {
+        if (!isMinimized && (e.target.closest('.nav-controls') || e.target.tagName === 'INPUT')) return;
         e.preventDefault();
-
+        
         isDragging = true;
         startX = e.clientX; startY = e.clientY;
         const rect = container.getBoundingClientRect();
         initialLeft = rect.left; initialTop = rect.top;
         
-        // 切换为 left/top 定位，防止 right/bottom 干扰
+        // --- 核心修复：按下瞬间立即“锁死”当前的绝对位置 ---
+        // 这样可以防止浏览器因为 right/bottom 属性在计算时的偏差而导致“跳动”
+        // 尤其是从悬浮球(右侧定位) -> 展开时，left 为空导致跳转到 0
         container.style.right = 'auto'; container.style.bottom = 'auto';
-        container.style.width = rect.width + 'px'; container.style.height = rect.height + 'px';
-        
+        container.style.left = rect.left + 'px'; 
+        container.style.top = rect.top + 'px';
+
+        // 仅在非最小化状态下锁定宽高，防止悬浮球的 48px 被记录
+        if (!isMinimized) {
+            container.style.width = rect.width + 'px'; 
+            container.style.height = rect.height + 'px';
+            savedDimensions.width = rect.width + 'px';
+            savedDimensions.height = rect.height + 'px';
+        }
+
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
-    });
-    function onMouseMove(e) { 
-        if(isDragging) { 
-            container.style.left = (initialLeft + e.clientX - startX) + 'px'; 
-            container.style.top = (initialTop + e.clientY - startY) + 'px'; 
-        }
-    }
-    function onMouseUp() { 
-        isDragging = false; 
-        document.removeEventListener('mousemove', onMouseMove); 
-        document.removeEventListener('mouseup', onMouseUp); 
+    };
+
+    document.getElementById('ai-nav-drag-area').addEventListener('mousedown', handleMouseDown);
+    minimizedIcon.addEventListener('mousedown', handleMouseDown);
+
+    function onMouseMove(e) {
+        if (!isDragging) return;
+        container.style.left = (initialLeft + (e.clientX - startX)) + 'px';
+        container.style.top = (initialTop + (e.clientY - startY)) + 'px';
     }
 
+    function onMouseUp() {
+        isDragging = false;
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+    }
+
+    // --- 8. 观察者 ---
     const observer = new MutationObserver((mutations) => {
         const isSelfMutation = mutations.every(m => container.contains(m.target));
         if (isSelfMutation) return;
-
         if (window.navTimeout) clearTimeout(window.navTimeout);
-        window.navTimeout = setTimeout(() => {
-            if (activeTab === 'current') renderCurrentPageNav(false);
-        }, 2000);
+        window.navTimeout = setTimeout(() => { if(activeTab==='current') renderCurrentPageNav(false); }, 2000);
     });
-    
-    observer.observe(document.body, { childList: true, subtree: true });
-
+    observer.observe(document.body, {childList:true, subtree:true});
     setInterval(applyTheme, 3000);
 
     setTimeout(() => {
-        renderCurrentPageNav(true);
+        if (!isMinimized) renderCurrentPageNav(true);
         applyTheme();
     }, 1500);
 
