@@ -29,6 +29,20 @@
                 const first = document.querySelector('[data-message-author-role="user"]');
                 return first ? (first.textContent.trim().substring(0, 15) + '...') : '新对话';
             }
+        },
+        // --- DeepSeek 策略 (已针对你提供的 HTML 优化) ---
+        deepseek: {
+            name: 'DeepSeek',
+            // 增加 .fbb737a4 和 .ds-message (配合父级筛选)
+            querySelector: '.fbb737a4, .ds-user-message, [data-role="user"], .user-message', 
+            getText: (node) => node.textContent.trim(),
+            getTitle: () => {
+                let docTitle = document.title.replace('DeepSeek', '').trim();
+                if (docTitle && docTitle !== 'New Chat') return docTitle;
+                // 优先尝试抓取那个特定的 hash 类名
+                const first = document.querySelector('.fbb737a4, .ds-user-message, [data-role="user"]');
+                return first ? (first.textContent.trim().substring(0, 15) + '...') : '新对话';
+            }
         }
     };
 
@@ -36,6 +50,7 @@
     const host = window.location.hostname;
     if (host.includes('gemini.google')) currentStrategy = STRATEGIES.gemini;
     else if (host.includes('chatgpt.com') || host.includes('openai.com')) currentStrategy = STRATEGIES.chatgpt;
+    else if (host.includes('deepseek.com')) currentStrategy = STRATEGIES.deepseek;
     else return;
 
     // --- 2. 状态管理 ---
@@ -47,7 +62,7 @@
     let isMinimized = localStorage.getItem(STATE_KEY) === 'true';
     let activeTab = 'current';
     let lastQueryCount = -1;
-    let savedDimensions = { width: '240px', height: '400px' }; // 记忆尺寸
+    let savedDimensions = { width: '240px', height: '400px' };
 
     const loadBookmarks = () => { try { return JSON.parse(localStorage.getItem(BOOKMARK_KEY)) || []; } catch(e){return[];} };
     const saveBookmarks = (list) => localStorage.setItem(BOOKMARK_KEY, JSON.stringify(list));
@@ -211,7 +226,9 @@
 
     function renderCurrentPageNav(force = false) {
         if (activeTab !== 'current' || isMinimized) return;
+        // DeepSeek 使用你提供的类名 .fbb737a4
         const queries = Array.from(document.querySelectorAll(currentStrategy.querySelector));
+        
         if (!force && queries.length === lastQueryCount) return;
         lastQueryCount = queries.length;
         listElement.innerHTML = '';
@@ -324,7 +341,7 @@
         localStorage.setItem(THEME_KEY, currentThemeMode); applyTheme();
     });
 
-    // --- 7. 拖拽逻辑 (BUG 修复核心) ---
+    // --- 7. 拖拽逻辑 ---
     let isDragging = false, startX, startY, initialLeft, initialTop;
     
     const handleMouseDown = (e) => {
@@ -336,14 +353,10 @@
         const rect = container.getBoundingClientRect();
         initialLeft = rect.left; initialTop = rect.top;
         
-        // --- 核心修复：按下瞬间立即“锁死”当前的绝对位置 ---
-        // 这样可以防止浏览器因为 right/bottom 属性在计算时的偏差而导致“跳动”
-        // 尤其是从悬浮球(右侧定位) -> 展开时，left 为空导致跳转到 0
         container.style.right = 'auto'; container.style.bottom = 'auto';
         container.style.left = rect.left + 'px'; 
         container.style.top = rect.top + 'px';
 
-        // 仅在非最小化状态下锁定宽高，防止悬浮球的 48px 被记录
         if (!isMinimized) {
             container.style.width = rect.width + 'px'; 
             container.style.height = rect.height + 'px';
@@ -374,10 +387,15 @@
     const observer = new MutationObserver((mutations) => {
         const isSelfMutation = mutations.every(m => container.contains(m.target));
         if (isSelfMutation) return;
+
         if (window.navTimeout) clearTimeout(window.navTimeout);
-        window.navTimeout = setTimeout(() => { if(activeTab==='current') renderCurrentPageNav(false); }, 2000);
+        window.navTimeout = setTimeout(() => {
+            if (activeTab === 'current') renderCurrentPageNav(false);
+        }, 2000);
     });
-    observer.observe(document.body, {childList:true, subtree:true});
+    
+    observer.observe(document.body, { childList: true, subtree: true });
+
     setInterval(applyTheme, 3000);
 
     setTimeout(() => {
