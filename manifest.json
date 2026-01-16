@@ -1,18 +1,19 @@
 {
   "manifest_version": 3,
-  "name": "AI 助手快速导航 (Gemini & ChatGPT)",
-  "version": "2.0",
-  "description": "为 Gemini 和 ChatGPT 提供侧边栏提问导航。",
-  "permissions": ["activeTab"],
+  "name": "AI Quick Nav",
+  "version": "11.5",
+  "description": "为 Gemini, ChatGPT 和 DeepSeek 提供侧边栏目录导航",
+  "permissions": ["storage"],
   "content_scripts": [
     {
       "matches": [
-        "https://gemini.google.com/*",
-        "https://chatgpt.com/*",
-        "https://chat.openai.com/*"
+        "*://gemini.google.com/*",
+        "*://chatgpt.com/*",
+        "*://chat.openai.com/*",
+        "*://chat.deepseek.com/*"
       ],
-      "css": ["styles.css"],
-      "js": ["content.js"]
+      "js": ["content.js"],
+      "run_at": "document_idle"
     }
   ]
 }
