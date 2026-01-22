@@ -1,7 +1,7 @@
 # 🚀 AI 助手快速导航 (AI Quick Nav) 全平台版
 
 <div align="center">
-  <img src="./images/poster.png" width="60%" alt="AI Quick Nav 宣传海报" />
+  <img src="/images/poster.png" width="60%" alt="AI Quick Nav 宣传海报" />
 </div>
 
 这是一个强大的浏览器扩展，专为 **Gemini**、**ChatGPT** 和 **DeepSeek** 用户设计。它不仅解决了长对话“回看难”的问题，还提供了跨对话的**收藏夹**功能，让你可以建立属于自己的常用对话知识库。
@@ -105,6 +105,7 @@
 
 **Q: 悬浮球拖动后，展开时窗口位置乱了怎么办？**
 * **A:** (v11.2+ 已修复) 现在的版本已经完美解决了这个问题。无论你把球拖到哪里，展开时窗口都会稳稳地停留在那里，且保持原有的大小。
+
 
 
 
